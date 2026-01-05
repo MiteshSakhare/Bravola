@@ -1,14 +1,20 @@
 import asyncio
+import sys
+from pathlib import Path
+
+# ✅ FIX: Add project root to path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 from sqlalchemy import text
 from app.core.database import async_session_factory
 
 async def fix():
     print("Opening database session...")
     async with async_session_factory() as db:
-        # This makes every merchant active so you don't get 'Inactive Account'
+        # This makes every merchant active
         await db.execute(text("UPDATE merchants SET is_active=True, is_verified=True"))
         
-        # This lists all your users so you know exactly which email to use
+        # List all users
         res = await db.execute(text("SELECT id, email, shop_name FROM merchants LIMIT 10"))
         print("\n--- Available Accounts ---")
         for r in res.all():

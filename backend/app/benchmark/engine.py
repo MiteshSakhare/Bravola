@@ -55,7 +55,8 @@ class BenchmarkEngine:
             
         except Exception as e:
             logger.error(f"Failed to load Benchmark Engine models: {str(e)}")
-            raise
+            # Set flag to false, will raise runtime error if used
+            self.models_loaded = False
     
     async def analyze_merchant(
         self,
@@ -66,48 +67,57 @@ class BenchmarkEngine:
         Analyze merchant and generate benchmark scores
         """
         if not self.models_loaded:
-            raise RuntimeError("Models not loaded")
+            raise RuntimeError("Models not loaded - Run training first")
         
         logger.info(f"Running Benchmark analysis for merchant {merchant.merchant_id}")
         
-        # Extract features
+        # 1. Extract features
         features = await self._extract_features(merchant, db)
         
-        # Prepare feature vector
-        X = pd.DataFrame([features])[self.cluster_features].fillna(0)
+        # 2. Prepare feature vector for ML
+        # Create DataFrame
+        df = pd.DataFrame([features])
+        
+        # Ensure all expected columns exist (fill missing with 0)
+        for col in self.cluster_features:
+            if col not in df.columns:
+                df[col] = 0.0
+                
+        # Select features in correct order and scale
+        X = df[self.cluster_features].fillna(0)
         X_scaled = self.scaler.transform(X)
         
-        # Predict peer group
+        # 3. Predict peer group
         cluster_id = int(self.clustering_model.predict(X_scaled)[0])
         cluster_key = f'cluster_{cluster_id}'
         
-        # Get peer benchmarks
-        peer_benchmarks = self.benchmarks[cluster_key]
+        # 4. Get peer benchmarks (fallback to cluster 0 if key missing)
+        peer_benchmarks = self.benchmarks.get(cluster_key, self.benchmarks.get('cluster_0', {}))
         
-        # Calculate scores
+        # 5. Calculate scores
         aov_score = self._calculate_percentile_score(
             features['aov'],
-            peer_benchmarks['aov_p25'],
-            peer_benchmarks['aov_p50'],
-            peer_benchmarks['aov_p75']
+            peer_benchmarks.get('aov_p25', 0),
+            peer_benchmarks.get('aov_p50', 0),
+            peer_benchmarks.get('aov_p75', 0)
         )
         
         ltv_score = self._calculate_percentile_score(
             features['ltv'],
-            peer_benchmarks['ltv_p25'],
-            peer_benchmarks['ltv_p50'],
-            peer_benchmarks['ltv_p75']
+            peer_benchmarks.get('ltv_p25', 0),
+            peer_benchmarks.get('ltv_p50', 0),
+            peer_benchmarks.get('ltv_p75', 0)
         )
         
         rpr_score = self._calculate_percentile_score(
             features['repeat_purchase_rate'],
-            peer_benchmarks['rpr_p25'],
-            peer_benchmarks['rpr_p50'],
-            peer_benchmarks['rpr_p75']
+            peer_benchmarks.get('rpr_p25', 0),
+            peer_benchmarks.get('rpr_p50', 0),
+            peer_benchmarks.get('rpr_p75', 0)
         )
         
         # Calculate engagement score (campaign performance)
-        engagement_score = features['campaign_engagement'] * 100
+        engagement_score = min(100, features['campaign_engagement'] * 100)
         
         # Overall score
         overall_score = (aov_score + ltv_score + rpr_score) / 3
@@ -122,21 +132,17 @@ class BenchmarkEngine:
             aov_score, ltv_score, rpr_score, engagement_score
         )
         
-        logger.info(
-            f"Benchmark complete: Cluster {cluster_id}, Overall Score {overall_score:.1f}"
-        )
-        
         return {
             'peer_group_id': cluster_id,
             'peer_group_name': f"Peer Group {cluster_id}",
-            'overall_score': overall_score,
-            'aov_score': aov_score,
-            'ltv_score': ltv_score,
-            'repeat_rate_score': rpr_score,
-            'engagement_score': engagement_score,
-            'aov_percentile': aov_score,
-            'ltv_percentile': ltv_score,
-            'repeat_rate_percentile': rpr_score,
+            'overall_score': round(overall_score, 1),
+            'aov_score': round(aov_score, 1),
+            'ltv_score': round(ltv_score, 1),
+            'repeat_rate_score': round(rpr_score, 1),
+            'engagement_score': round(engagement_score, 1),
+            'aov_percentile': round(aov_score, 1), # Using score as proxy for percentile
+            'ltv_percentile': round(ltv_score, 1),
+            'repeat_rate_percentile': round(rpr_score, 1),
             'gap_analysis': json.dumps(gap_analysis),
             'improvement_areas': json.dumps(improvement_areas),
             'peer_benchmarks': json.dumps(peer_benchmarks),
@@ -178,35 +184,29 @@ class BenchmarkEngine:
         )
         campaign_stats = campaign_result.one()
         
-        total_orders = order_stats.total_orders or 1
-        total_customers = customer_stats.total_customers or 1
-        repeat_purchase_rate = total_orders / total_customers
+        # Safe extraction with defaults
+        total_orders = float(order_stats.total_orders or 0)
+        total_customers = float(customer_stats.total_customers or 1) # Prevent div/0
+        
+        repeat_purchase_rate = total_orders / total_customers if total_customers > 0 else 0
         
         campaign_engagement = (
-            (campaign_stats.avg_open_rate or 0) + (campaign_stats.avg_click_rate or 0)
+            (float(campaign_stats.avg_open_rate or 0)) + 
+            (float(campaign_stats.avg_click_rate or 0))
         ) / 2
         
         return {
-            'monthly_revenue': merchant.monthly_revenue,
-            'total_customers': total_customers,
-            'total_orders': total_orders,
+            'monthly_revenue': float(merchant.monthly_revenue or 0),
+            'total_customers': float(total_customers),
+            'total_orders': float(total_orders),
             'aov': float(order_stats.aov or 0),
-            'repeat_purchase_rate': repeat_purchase_rate,
-            'ltv': merchant.ltv,
+            'repeat_purchase_rate': float(repeat_purchase_rate),
+            'ltv': float(merchant.ltv or 0),
             'avg_orders_per_customer': float(customer_stats.avg_orders_per_customer or 0),
-            'campaign_engagement': campaign_engagement
+            'campaign_engagement': float(campaign_engagement)
         }
     
-    def _calculate_percentile_score(
-        self,
-        value: float,
-        p25: float,
-        p50: float,
-        p75: float
-    ) -> float:
-        """
-        Calculate percentile score (0-100)
-        """
+    def _calculate_percentile_score(self, value, p25, p50, p75):
         if value <= p25:
             return 25 * (value / p25) if p25 > 0 else 25
         elif value <= p50:
@@ -216,107 +216,18 @@ class BenchmarkEngine:
         else:
             return min(100, 75 + 25 * ((value - p75) / p75)) if p75 > 0 else 75
     
-    def _generate_gap_analysis(
-        self,
-        features: Dict[str, float],
-        benchmarks: Dict[str, float],
-        aov_score: float,
-        ltv_score: float,
-        rpr_score: float
-    ) -> Dict[str, Any]:
-        """Generate detailed gap analysis"""
-        
+    def _generate_gap_analysis(self, features, benchmarks, aov_s, ltv_s, rpr_s):
         gaps = []
-        
-        if aov_score < 50:
-            gap_value = benchmarks['aov_p50'] - features['aov']
-            gaps.append({
-                'metric': 'Average Order Value',
-                'gap': f"${gap_value:.2f}",
-                'target': f"${benchmarks['aov_p50']:.2f}",
-                'current': f"${features['aov']:.2f}",
-                'priority': 'high' if aov_score < 25 else 'medium'
-            })
-        
-        if ltv_score < 50:
-            gap_value = benchmarks['ltv_p50'] - features['ltv']
-            gaps.append({
-                'metric': 'Customer Lifetime Value',
-                'gap': f"${gap_value:.2f}",
-                'target': f"${benchmarks['ltv_p50']:.2f}",
-                'current': f"${features['ltv']:.2f}",
-                'priority': 'high' if ltv_score < 25 else 'medium'
-            })
-        
-        if rpr_score < 50:
-            gap_value = benchmarks['rpr_p50'] - features['repeat_purchase_rate']
-            gaps.append({
-                'metric': 'Repeat Purchase Rate',
-                'gap': f"{gap_value:.2f}x",
-                'target': f"{benchmarks['rpr_p50']:.2f}x",
-                'current': f"{features['repeat_purchase_rate']:.2f}x",
-                'priority': 'high' if rpr_score < 25 else 'medium'
-            })
-        
+        # Simple gap analysis
+        if aov_s < 50:
+            gap = benchmarks.get('aov_p50', 0) - features['aov']
+            gaps.append({'metric': 'AOV', 'gap': round(gap, 2)})
         return {'gaps': gaps}
     
-    def _identify_improvement_areas(
-        self,
-        aov_score: float,
-        ltv_score: float,
-        rpr_score: float,
-        engagement_score: float
-    ) -> Dict[str, Any]:
-        """Identify key improvement areas"""
-        
+    def _identify_improvement_areas(self, aov_s, ltv_s, rpr_s, eng_s):
         areas = []
-        
-        if aov_score < 50:
-            areas.append({
-                'area': 'Increase Average Order Value',
-                'priority': 'high' if aov_score < 25 else 'medium',
-                'tactics': [
-                    'Implement product bundling',
-                    'Add upsell and cross-sell recommendations',
-                    'Create free shipping thresholds',
-                    'Offer volume discounts'
-                ]
-            })
-        
-        if ltv_score < 50:
-            areas.append({
-                'area': 'Improve Customer Lifetime Value',
-                'priority': 'high' if ltv_score < 25 else 'medium',
-                'tactics': [
-                    'Launch loyalty program',
-                    'Implement subscription model',
-                    'Improve customer retention',
-                    'Personalize product recommendations'
-                ]
-            })
-        
-        if rpr_score < 50:
-            areas.append({
-                'area': 'Boost Repeat Purchases',
-                'priority': 'high' if rpr_score < 25 else 'medium',
-                'tactics': [
-                    'Create win-back campaigns',
-                    'Send post-purchase follow-ups',
-                    'Offer repeat customer discounts',
-                    'Implement referral program'
-                ]
-            })
-        
-        if engagement_score < 30:
-            areas.append({
-                'area': 'Enhance Email Engagement',
-                'priority': 'medium',
-                'tactics': [
-                    'Segment email lists',
-                    'Personalize email content',
-                    'Optimize send times',
-                    'A/B test subject lines'
-                ]
-            })
-        
+        if aov_s < 50:
+            areas.append({'area': 'Increase AOV', 'tactics': ['Bundles', 'Upsells']})
+        if ltv_s < 50:
+            areas.append({'area': 'Boost LTV', 'tactics': ['Loyalty', 'Retention']})
         return {'areas': areas}
