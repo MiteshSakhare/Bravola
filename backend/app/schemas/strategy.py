@@ -1,11 +1,32 @@
 """
-Strategy schemas
+Strategy and Rules schemas
 """
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 
+# --- Rule Schemas ---
+class StrategyRuleBase(BaseModel):
+    rule_name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = None
+    condition_metric: str
+    operator: str
+    threshold_value: str
+    action_type: str
+    target_strategy_type: str
+    impact_factor: float = 1.0
+    is_active: bool = True
+
+class StrategyRuleCreate(StrategyRuleBase):
+    pass
+
+class StrategyRuleResponse(StrategyRuleBase):
+    id: int
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+# --- Strategy Schemas ---
 class StrategyBase(BaseModel):
     strategy_name: str = Field(..., min_length=1, max_length=255)
     strategy_type: str = Field(..., min_length=1, max_length=100)
@@ -24,6 +45,8 @@ class StrategyCreate(StrategyBase):
 
 class StrategyUpdate(BaseModel):
     status: Optional[str] = None
+    sync_status: Optional[str] = None # New field
+    klaviyo_campaign_id: Optional[str] = None # New field
     actual_roi: Optional[float] = None
     actual_revenue: Optional[float] = None
     implemented_at: Optional[datetime] = None
@@ -41,14 +64,20 @@ class StrategyResponse(StrategyBase):
     timeline: Optional[str] = None
     status: str
     is_eligible: bool
+    
+    # Execution Tracking
     implemented_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     actual_roi: Optional[float] = None
     actual_revenue: Optional[float] = None
+    
+    # Sync Status
+    sync_status: Optional[str] = "pending"
+    klaviyo_campaign_id: Optional[str] = None
+    
     created_at: datetime
     updated_at: Optional[datetime] = None
     
-    # Updated to new Pydantic v2 style
     model_config = ConfigDict(from_attributes=True)
 
 class StrategyRecommendation(BaseModel):
