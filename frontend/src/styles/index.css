@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-foreground antialiased font-sans transition-colors duration-200;
+  }
+  
+  /* Dark mode overrides */
+  .dark body {
+    @apply bg-dark-bg text-dark-text;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display font-bold;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 inline-flex items-center justify-center cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+.btn-primary {
+    /* 🔴 WAS: active:bg-primary-800 */
+    /* ✅ CHANGE TO: active:bg-primary-700 */
+    @apply bg-primary-600 text-white hover:bg-primary-700 active:bg-primary-700 shadow-sm hover:shadow-md;
+  }
+  
+  .btn-secondary {
+    @apply bg-slate-200 text-slate-800 hover:bg-slate-300 active:bg-slate-400 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600;
+  }
+  
+  .btn-outline {
+    @apply border-2 border-primary-600 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20;
+  }
+  
+  .card {
+    @apply bg-white dark:bg-dark-card text-foreground dark:text-dark-text rounded-xl shadow-sm border border-border dark:border-dark-border p-6;
+  }
+  
+  .input {
+    @apply w-full px-4 py-2 border border-input dark:border-dark-border bg-background dark:bg-dark-bg rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent outline-none transition-all;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-700 rounded-full;
+}

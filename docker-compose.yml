@@ -1,0 +1,124 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: bravola-postgres
+    environment:
+      POSTGRES_USER: bravola_user
+      POSTGRES_PASSWORD: bravola_pass
+      POSTGRES_DB: bravola_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - bravola_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bravola_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: bravola-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - bravola_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bravola-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://bravola_user:bravola_pass@postgres:5432/bravola_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your-secret-key-change-in-production
+      - ENVIRONMENT=development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./ml_artifacts:/ml_artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bravola_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bravola-frontend
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - bravola_network
+    command: npm run dev -- --host 0.0.0.0
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bravola-celery-worker
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://bravola_user:bravola_pass@postgres:5432/bravola_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your-secret-key-change-in-production
+    volumes:
+      - ./backend:/app
+      - ./ml_artifacts:/ml_artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - bravola_network
+    command: celery -A app.workers.celery_app worker --loglevel=info
+
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bravola-celery-beat
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://bravola_user:bravola_pass@postgres:5432/bravola_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your-secret-key-change-in-production
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    networks:
+      - bravola_network
+    command: celery -A app.workers.celery_app beat --loglevel=info
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bravola_network:
+    driver: bridge
